@@ -19,7 +19,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ✅ FIXED INDENTATION
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -27,10 +26,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 🔥 CREATE INFRASTRUCTURE FIRST
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Apply (Create Infra + ECR)
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve \
+          -var="container_image=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest"
+
+      # 🔥 THEN LOGIN TO ECR
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ✅ SAFE VARIABLE USAGE
       - name: Build Docker image
         run: |
           docker build -t ${{ env.ECR_REPOSITORY }} ./app
@@ -42,15 +55,11 @@ jobs:
           docker push \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: ./terraform
+      # 🔥 FORCE ECS TO REDEPLOY WITH NEW IMAGE
+      - name: Force ECS Deployment
         run: |
-          terraform apply -auto-approve \
-          -var="container_image=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest"
+          aws ecs update-service \
+            --cluster myapp-dev-cluster \
+            --service myapp-dev-service \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
